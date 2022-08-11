@@ -30,16 +30,17 @@ func NewChunker(r io.Reader, min, max, avg int, out io.Writer) *Chunker {
 
 func (n *Chunker) Chunk() error {
 	h := fnv.New32a()
-	b1 := make([]byte, 2048*1024)
+	b1 := make([]byte, 1024*1024)
 	n1, err := n.r.Read(b1)
 	if err != nil {
 		log.Fatalf("error reading %s", err)
 	}
 	for n1 > 0 {
 		s := make([]byte, n1)
+
 		copy(s, b1)
 		buf0 := bytes.NewBuffer(s)
-		m := rabin.NewChunker(n.rabinTable, buf0, 4096, 8*1024, 128*1024)
+		m := rabin.NewChunker(n.rabinTable, buf0, 4096, 8*1024, 32*1024)
 		buf0_0 := bytes.NewBuffer(s)
 		for z := 0; ; z++ {
 			clen, err := m.Next()
@@ -78,12 +79,14 @@ func (n *Chunker) Chunk() error {
 					return err
 				}
 				h.Write(buf.Bytes())
-				sEnc := b32.StdEncoding.EncodeToString(i32tob(h.Sum32()))
+				sEnc := b32.StdEncoding.EncodeToString(i32tob(h.Sum32())[:2])
 				n.out.Write([]byte(strings.ToLower(strings.Replace(sEnc, "=", "", -1))))
 				h.Reset()
 
 			}
+
 		}
+		b1 = make([]byte, 1024*1024)
 		n1, err = n.r.Read(b1)
 		if n1 == 0 {
 			break
@@ -92,6 +95,7 @@ func (n *Chunker) Chunk() error {
 			log.Errorf("error reading %s %d", err, n1)
 			return err
 		}
+		s = nil
 	}
 	return nil
 }

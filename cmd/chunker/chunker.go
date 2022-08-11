@@ -8,19 +8,26 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/opendedup/binarybert/api"
 	"github.com/sirupsen/logrus"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 var log = logrus.New()
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe(":8081", nil))
+	}()
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [flags] in-file\n\n", os.Args[0])
@@ -29,14 +36,19 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
-	window := FlagBytes("window", 64, "use a rolling hash with window size `w`")
-	avg := FlagBytes("avg", 4<<10, "average chunk `size`; must be a power of 2")
-	min := FlagBytes("min", 512, "minimum chunk `size`")
-	max := FlagBytes("max", 32<<10, "maximum chunk `size`")
+	window := flag.Int("window", 48, "use a rolling hash with window size `w`")
+	avg := flag.Int("avg", 2048, "average chunk `size`; must be a power of 2")
+	min := flag.Int("min", 96, "minimum chunk `size`")
+	max := flag.Int("max", 128*1024, "maximum chunk `size`")
 	outBase := flag.String("out", "", "output folder")
 	inFile := flag.String("infile", "", "input file")
 	docker := flag.Bool("dockerimages", false, "parse docker images")
-	images := [...]string{"ubuntu", "debian", "fedora", "centos", "tensorflow/tensorflow", "apache/spark", "alpine"}
+	github := flag.Bool("github", false, "parse github projects")
+	images := [...]string{"ubuntu",
+		"debian", "fedora", "centos", "tensorflow/tensorflow", "apache/spark", "alpine",
+		"busybox", "python", "postgres", "redis", "arm64v8/alpine", "arm64v8/ubuntu", "arm64v8/debian", "arm64v8/busybox",
+		"arm64v8/postgres"}
+	languages := [...]string{"java", "javascript", "python", "go", "c++", "c"}
 	var myClient = &http.Client{Timeout: 10 * time.Second}
 
 	flag.Parse()
@@ -55,6 +67,7 @@ func main() {
 	if len(*inFile) > 0 {
 		_, file := path.Split(*inFile)
 		if _, err := os.Stat(*inFile); errors.Is(err, os.ErrNotExist) {
+			log.Infof("1")
 			log.Fatal(err)
 		}
 		fn := fmt.Sprintf("%s/%s.txt", *outBase, file)
@@ -62,30 +75,31 @@ func main() {
 
 			of, err := os.Create(fn)
 			if err != nil {
+				log.Infof("2")
 				log.Fatal(err)
 			}
 			defer of.Close()
 			// Open input file
 			f, err := os.Open(*inFile)
 			if err != nil {
+				log.Infof("3")
 				log.Fatal(err)
 			}
 			defer f.Close()
 
-			// Chunk and write output files.
-			cpy := new(bytes.Buffer)
-			r := io.TeeReader(f, cpy)
-			ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
+			ck := api.NewChunker(f, int(*min), int(*avg), int(*max), of)
 			err = ck.Chunk()
 			if err != nil {
+				log.Infof("4")
 				log.Fatal(err)
 			}
 
 		}
+		return
 
 	} else if *docker {
-
 		for _, element := range images {
+
 			hr, err := myClient.Get(fmt.Sprintf("https://registry.hub.docker.com/v1/repositories/%s/tags", element))
 			if err != nil {
 
@@ -98,41 +112,132 @@ func main() {
 			defer hr.Body.Close()
 			body, err := ioutil.ReadAll(hr.Body)
 			if err != nil {
+				log.Infof("6")
 				log.Fatal(err)
 			}
 			err = json.Unmarshal(body, &dimages)
 			if err != nil {
+				log.Infof("7")
+				log.Warn(err)
+			} else {
+				cr := strings.Replace(element, "/", "_", -1)
+				fp := fmt.Sprintf("%s/%s", *outBase, cr)
+				os.MkdirAll(fp, os.ModePerm)
+				fmt.Printf("downloading %s to %s\n", element, fp)
+				z := 0
+				for _, tag := range dimages {
+					z++
+					if z == 100 {
+						break
+					}
+					nm := tag.Name
+					if len(nm) == 0 {
+						nm = "latest"
+					}
+					ft := fmt.Sprintf("%s/%s.%s.tar", fp, strings.Replace(element, "/", "_", -1), nm)
+					if _, err := os.Stat(fmt.Sprintf("%s.txt", ft)); errors.Is(err, os.ErrNotExist) {
+
+						cmd := exec.Command("docker", "pull", fmt.Sprintf("%s:%s", element, nm))
+
+						_, err := cmd.Output()
+						if err != nil {
+							log.Infof("Skipping %s:%s", element, nm)
+							log.Warn(err)
+						} else {
+
+							cmd = exec.Command("docker", "save", "-o", ft, fmt.Sprintf("%s:%s", element, nm))
+
+							_, err = cmd.Output()
+							if err != nil {
+								log.Infof("Unable to save %s:%s", element, nm)
+
+								log.Fatal(err)
+							}
+							of, err := os.Create(fmt.Sprintf("%s.txt", ft))
+							if err != nil {
+								log.Infof("Unable to create output file")
+								log.Fatal(err)
+							}
+							defer of.Close()
+							// Open input file
+							f, err := os.Open(ft)
+							if err != nil {
+								log.Infof("Unable to create input file")
+								log.Fatal(err)
+							}
+							defer f.Close()
+
+							// Chunk and write output files.
+							cpy := new(bytes.Buffer)
+							r := io.TeeReader(f, cpy)
+							ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
+							err = ck.Chunk()
+							if err != nil {
+								log.Infof("Unable to create new chunker")
+								log.Fatal(err)
+							}
+							os.Remove(ft)
+							cmd = exec.Command("docker", "image", "rm", fmt.Sprintf("%s:%s", element, nm))
+							cmd.Output()
+						}
+					}
+				}
+			}
+
+		}
+	} else if *github {
+		fmt.Println("Getting github data")
+		for _, language := range languages {
+			turl := fmt.Sprintf("https://gh-trending-api.herokuapp.com/repositories/%s", language)
+			hr, err := myClient.Get(turl)
+			if err != nil {
 				log.Fatal(err)
 			}
-			for _, tag := range dimages {
-				nm := tag.Name
-				if len(nm) == 0 {
-					nm = "latest"
-				}
-				ft := fmt.Sprintf("%s/%s.%s.tar", *outBase, element, nm)
-				if _, err := os.Stat(fmt.Sprintf("%s.txt", ft)); errors.Is(err, os.ErrNotExist) {
-
-					cmd := exec.Command("docker", "pull", fmt.Sprintf("%s:%s", element, nm))
+			type Repo struct {
+				Url string `json:"url"`
+			}
+			var repos []Repo
+			defer hr.Body.Close()
+			body, err := ioutil.ReadAll(hr.Body)
+			if err != nil {
+				log.Infof("6")
+				log.Fatal(err)
+			}
+			err = json.Unmarshal(body, &repos)
+			if err != nil {
+				log.Infof("7")
+				log.Warn(err)
+			}
+			basedir := fmt.Sprintf("%s/%s", *outBase, language)
+			os.MkdirAll(basedir, os.ModePerm)
+			for _, repo := range repos {
+				reponame := filepath.Base(repo.Url)
+				repopath := fmt.Sprintf("%s/%s", basedir, reponame)
+				if _, err := os.Stat(fmt.Sprintf("%s.txt", repopath)); errors.Is(err, os.ErrNotExist) {
+					cmd := exec.Command("git", "clone", repo.Url, repopath)
 
 					_, err := cmd.Output()
 					if err != nil {
-						log.Fatal(err)
+						log.Infof("Skipping %s", filepath.Base(repo.Url))
+						log.Warn(err)
 					}
-
-					cmd = exec.Command("docker", "save", "-o", ft, fmt.Sprintf("%s:%s", element, nm))
-
+					tarpath := fmt.Sprintf("%s.tar", repopath)
+					cmd = exec.Command("tar", "-cf", tarpath, repopath)
 					_, err = cmd.Output()
 					if err != nil {
+						log.Infof("error taring %s", repopath)
 						log.Fatal(err)
 					}
-					of, err := os.Create(fmt.Sprintf("%s.txt", ft))
+					of, err := os.Create(fmt.Sprintf("%s.txt", tarpath))
 					if err != nil {
+						log.Infof("Unable to create output file")
 						log.Fatal(err)
 					}
 					defer of.Close()
 					// Open input file
-					f, err := os.Open(ft)
+					f, err := os.Open(tarpath)
 					if err != nil {
+						log.Infof("Unable to create input file")
 						log.Fatal(err)
 					}
 					defer f.Close()
@@ -143,15 +248,22 @@ func main() {
 					ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
 					err = ck.Chunk()
 					if err != nil {
+						log.Infof("Unable to create new chunker")
 						log.Fatal(err)
 					}
-					os.Remove(ft)
-					cmd = exec.Command("docker", "image", "rm", fmt.Sprintf("%s:%s", element, nm))
-					cmd.Output()
+					err = os.RemoveAll(repopath)
+					if err != nil {
+						log.Fatal(err)
+					}
+					err = os.Remove(tarpath)
+					if err != nil {
+						log.Fatal(err)
+					}
 				}
-			}
 
+			}
 		}
+
 	}
 
 }
