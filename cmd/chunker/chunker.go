@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,7 @@ func main() {
 	outBase := flag.String("out", "", "output folder")
 	inFile := flag.String("infile", "", "input file")
 	docker := flag.Bool("dockerimages", false, "parse docker images")
+	kaggle := flag.Bool("kaggle", false, "parse kaggle datasets")
 	github := flag.Bool("github", false, "parse github projects")
 	images := [...]string{"ubuntu",
 		"debian", "fedora", "centos", "tensorflow/tensorflow", "apache/spark", "alpine",
@@ -233,14 +235,13 @@ func main() {
 						log.Infof("Unable to create output file")
 						log.Fatal(err)
 					}
-					defer of.Close()
+
 					// Open input file
 					f, err := os.Open(tarpath)
 					if err != nil {
 						log.Infof("Unable to create input file")
 						log.Fatal(err)
 					}
-					defer f.Close()
 
 					// Chunk and write output files.
 					cpy := new(bytes.Buffer)
@@ -259,11 +260,123 @@ func main() {
 					if err != nil {
 						log.Fatal(err)
 					}
+					of.Close()
+					f.Close()
 				}
 
 			}
 		}
 
+	} else if *kaggle {
+		for i := 0; i < 5; i++ {
+			repos, err := listKaggle(i)
+			if err != nil {
+				log.Fatal(err)
+			}
+			for _, repo := range *repos {
+				tarpath, err := downloadKaggle(repo, *outBase)
+				if err != nil {
+
+					log.Fatal(err)
+				}
+				of, err := os.Create(fmt.Sprintf("%s.txt", *tarpath))
+				if err != nil {
+					log.Infof("Unable to create output file")
+					log.Fatal(err)
+				}
+
+				// Open input file
+				f, err := os.Open(*tarpath)
+				if err != nil {
+					log.Infof("Unable to create input file")
+					log.Fatal(err)
+				}
+
+				// Chunk and write output files.
+				cpy := new(bytes.Buffer)
+				r := io.TeeReader(f, cpy)
+				ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
+				err = ck.Chunk()
+				if err != nil {
+					log.Infof("Unable to create new chunker")
+					log.Fatal(err)
+				}
+				err = os.Remove(*tarpath)
+				if err != nil {
+					log.Fatal(err)
+				}
+				of.Close()
+				f.Close()
+
+			}
+		}
 	}
 
+}
+
+func downloadKaggle(repo, basfolder string) (tarfile *string, err error) {
+	pth := fmt.Sprintf("%s/%s", basfolder, strings.Replace(repo, "/", "_", -1))
+	os.MkdirAll(pth, os.ModePerm)
+	defer os.RemoveAll(pth)
+	cmd := exec.Command("kaggle", "dataset", "download", "--unzip", "--path", pth)
+	_, err = cmd.Output()
+	if err != nil {
+		log.Infof("Skipping %s", repo)
+		return nil, err
+	}
+	tf := fmt.Sprintf("%s/%s.tar", basfolder, pth)
+	cmd = exec.Command("tar", "-cf", tf, pth)
+	_, err = cmd.Output()
+	if err != nil {
+		log.Infof("unable to tar %s", repo)
+		return nil, err
+	}
+
+	return &tf, nil
+
+}
+
+func listKaggle(page int) (repos *[]string, err error) {
+	cmd := exec.Command("kaggle", "datasets", "list", "--sort-by", "votes", "--csv", "--page", string(page))
+
+	// Get a pipe to read from standard out
+	r, _ := cmd.StdoutPipe()
+
+	// Use the same pipe for standard error
+	cmd.Stderr = cmd.Stdout
+
+	// Make a new channel which will be used to ensure we get all output
+	done := make(chan struct{})
+
+	// Create a scanner which scans r in a line-by-line fashion
+	scanner := bufio.NewScanner(r)
+
+	// Use the scanner to scan the output line by line and log it
+	// It's running in a goroutine so that it doesn't block
+	var _repos []string
+	go func() {
+
+		// Read line by line and process it
+		for scanner.Scan() {
+			line := scanner.Text()
+			_repos = append(_repos, strings.Split(line, ",")[0])
+		}
+
+		// We're all done, unblock the channel
+		done <- struct{}{}
+
+	}()
+
+	// Start the command and check for errors
+	err = cmd.Start()
+	if err != nil {
+		return repos, err
+	}
+
+	// Wait for all output to be processed
+	<-done
+
+	// Wait for the command to finish
+	err = cmd.Wait()
+	return &_repos, err
 }
