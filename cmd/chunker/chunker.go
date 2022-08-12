@@ -2,17 +2,16 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +36,7 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
+
 	window := flag.Int("window", 48, "use a rolling hash with window size `w`")
 	avg := flag.Int("avg", 2048, "average chunk `size`; must be a power of 2")
 	min := flag.Int("min", 96, "minimum chunk `size`")
@@ -170,9 +170,7 @@ func main() {
 							defer f.Close()
 
 							// Chunk and write output files.
-							cpy := new(bytes.Buffer)
-							r := io.TeeReader(f, cpy)
-							ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
+							ck := api.NewChunker(f, int(*min), int(*avg), int(*max), of)
 							err = ck.Chunk()
 							if err != nil {
 								log.Infof("Unable to create new chunker")
@@ -244,9 +242,7 @@ func main() {
 					}
 
 					// Chunk and write output files.
-					cpy := new(bytes.Buffer)
-					r := io.TeeReader(f, cpy)
-					ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
+					ck := api.NewChunker(f, int(*min), int(*avg), int(*max), of)
 					err = ck.Chunk()
 					if err != nil {
 						log.Infof("Unable to create new chunker")
@@ -268,7 +264,7 @@ func main() {
 		}
 
 	} else if *kaggle {
-		for i := 0; i < 5; i++ {
+		for i := 1; i < 6; i++ {
 			repos, err := listKaggle(i)
 			if err != nil {
 				log.Fatal(err)
@@ -293,9 +289,8 @@ func main() {
 				}
 
 				// Chunk and write output files.
-				cpy := new(bytes.Buffer)
-				r := io.TeeReader(f, cpy)
-				ck := api.NewChunker(r, int(*min), int(*avg), int(*max), of)
+
+				ck := api.NewChunker(f, int(*min), int(*avg), int(*max), of)
 				err = ck.Chunk()
 				if err != nil {
 					log.Infof("Unable to create new chunker")
@@ -318,17 +313,19 @@ func downloadKaggle(repo, basfolder string) (tarfile *string, err error) {
 	pth := fmt.Sprintf("%s/%s", basfolder, strings.Replace(repo, "/", "_", -1))
 	os.MkdirAll(pth, os.ModePerm)
 	defer os.RemoveAll(pth)
-	cmd := exec.Command("kaggle", "dataset", "download", "--unzip", "--path", pth)
-	_, err = cmd.Output()
+	cmd := exec.Command("kaggle", "datasets", "download", "--unzip", "--path", pth, repo)
+
+	err = cmd.Run()
+
 	if err != nil {
 		log.Infof("Skipping %s", repo)
 		return nil, err
 	}
-	tf := fmt.Sprintf("%s/%s.tar", basfolder, pth)
+	tf := fmt.Sprintf("%s.tar", pth)
 	cmd = exec.Command("tar", "-cf", tf, pth)
 	_, err = cmd.Output()
 	if err != nil {
-		log.Infof("unable to tar %s", repo)
+		log.Infof("unable to tar %s from %s", tf, pth)
 		return nil, err
 	}
 
@@ -337,7 +334,7 @@ func downloadKaggle(repo, basfolder string) (tarfile *string, err error) {
 }
 
 func listKaggle(page int) (repos *[]string, err error) {
-	cmd := exec.Command("kaggle", "datasets", "list", "--sort-by", "votes", "--csv", "--page", string(page))
+	cmd := exec.Command("kaggle", "datasets", "list", "--sort-by", "votes", "--csv", "--page", strconv.Itoa(page))
 
 	// Get a pipe to read from standard out
 	r, _ := cmd.StdoutPipe()
@@ -357,9 +354,16 @@ func listKaggle(page int) (repos *[]string, err error) {
 	go func() {
 
 		// Read line by line and process it
+		z := 0
 		for scanner.Scan() {
 			line := scanner.Text()
-			_repos = append(_repos, strings.Split(line, ",")[0])
+			if z != 0 {
+
+				_repos = append(_repos, strings.Split(line, ",")[0])
+			} else {
+				fmt.Println(line)
+			}
+			z++
 		}
 
 		// We're all done, unblock the channel
