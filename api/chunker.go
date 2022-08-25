@@ -33,7 +33,8 @@ func (n *Chunker) Chunk() error {
 	b1 := make([]byte, 1024*1024)
 	n1, err := n.r.Read(b1)
 	if err != nil {
-		log.Fatalf("error reading %s", err)
+		log.Error("error initial read %s", err)
+		return err
 	}
 	for n1 > 0 {
 		s := make([]byte, n1)
@@ -48,16 +49,18 @@ func (n *Chunker) Chunk() error {
 				n.out.Write([]byte("\n"))
 				break
 			} else if err != nil {
-				log.Fatal(err)
+				log.Error(err)
+				return err
 			}
 
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err)
+				return err
 			}
 			cbuf := new(bytes.Buffer)
 			_, err = io.CopyN(cbuf, buf0_0, int64(clen))
 			if err != nil {
-				log.Errorf("error reading %s ", err)
+				log.Errorf("error reading new chunk %s ", err)
 				return err
 			}
 			buf2 := bytes.NewBuffer(cbuf.Bytes())
@@ -92,7 +95,7 @@ func (n *Chunker) Chunk() error {
 			break
 		}
 		if err != nil {
-			log.Errorf("error reading %s %d", err, n1)
+			log.Errorf("error reading new buffer %s %d", err, n1)
 			return err
 		}
 		s = nil

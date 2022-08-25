@@ -8,6 +8,7 @@ require (
 )
 
 require (
-	github.com/inhies/go-bytesize v0.0.0-20220417184213-4913239db9cf
+	github.com/ahmetask/worker v1.3.2
+	github.com/docker/go-units v0.4.0
 	golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8 // indirect
 )

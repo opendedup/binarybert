@@ -1,6 +1,5 @@
 make --dry-run --always-make --keep-going --print-directory
 make: Entering directory '/home/samsilverberg/git/binarybert'
- 
 mkdir -p /home/samsilverberg/git/binarybert/build
 echo "Building bertchunker binary to '/home/samsilverberg/git/binarybert/build/bertchunker'"
 go build -ldflags="-X 'main.Version=main' -X 'main.BuildDate=$(date -Iseconds)'" -o ./build/bertchunker cmd/chunker/*

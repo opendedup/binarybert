@@ -1,0 +1,23 @@
+FROM gcr.io/deeplearning-platform-release/tf2-gpu.2-9
+LABEL email=sam.silverberg@gmail.com
+LABEL author="Sam Silverberg"
+
+
+RUN pip install --upgrade pip && \
+    pip install \
+    google-cloud-tpu \
+    tokenizers \
+    nltk \
+    sentencepiece \
+    ipykernel \
+    transformers \
+    sentence_transformers \
+    datasets \
+    torch \
+    grpcio-tools \
+    kaggle
+WORKDIR /home/jupyter
+
+
+ENTRYPOINT [ "/entrypoint.sh" ]
+CMD [ "/run_jupyter.sh" ]
