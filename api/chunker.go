@@ -21,16 +21,17 @@ type Chunker struct {
 	max        int
 	avg        int
 	out        io.Writer
+	bufSize    int
 }
 
-func NewChunker(r io.Reader, min, max, avg int, out io.Writer) *Chunker {
-	return &Chunker{r: r, min: min, max: max, avg: avg, out: out, rabinTable: rabin.NewTable(rabin.Poly64, 64)}
+func NewChunker(r io.Reader, min, max, avg, bufSize int, out io.Writer) *Chunker {
+	return &Chunker{r: r, min: min, max: max, avg: avg, out: out, rabinTable: rabin.NewTable(rabin.Poly64, 64), bufSize: bufSize}
 
 }
 
 func (n *Chunker) Chunk() error {
 	h := fnv.New32a()
-	b1 := make([]byte, 1024*1024)
+	b1 := make([]byte, n.bufSize)
 	n1, err := n.r.Read(b1)
 	if err != nil {
 		log.Error("error initial read %s", err)
@@ -89,7 +90,7 @@ func (n *Chunker) Chunk() error {
 			}
 
 		}
-		b1 = make([]byte, 1024*1024)
+		b1 = make([]byte, n.bufSize)
 		n1, err = n.r.Read(b1)
 		if n1 == 0 {
 			break

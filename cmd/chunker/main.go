@@ -32,6 +32,7 @@ func main() {
 	avg := flag.Int("avg", 2048, "average chunk `size`; must be a power of 2")
 	min := flag.Int("min", 96, "minimum chunk `size`")
 	max := flag.Int("max", 128*1024, "maximum chunk `size`")
+	bufSize := flag.Int("bufsize", 1, "dedupe buffer size in mb")
 	outBase := flag.String("out", "", "output folder")
 	inFile := flag.String("infile", "", "input file")
 	inFolder := flag.String("infolder", "", "input folder")
@@ -40,6 +41,7 @@ func main() {
 	kaggleFiles := flag.Bool("kaggleFiles", false, "parse files in kaggle datasets")
 	kaggle := flag.Bool("kaggle", false, "parse kaggle datasets")
 	github := flag.Bool("github", false, "parse github projects")
+	pqpath := flag.String("pqpath", "", "path to parquet translator")
 	images := []string{"ubuntu",
 		"debian", "fedora", "centos", "tensorflow/tensorflow", "apache/spark", "alpine",
 		"busybox", "python", "postgres", "redis", "arm64v8/alpine", "arm64v8/ubuntu", "arm64v8/debian", "arm64v8/busybox",
@@ -69,9 +71,10 @@ func main() {
 	if len(*outBase) == 0 {
 		log.Fatal("out must be set")
 	}
+	mb := *bufSize * 1024 * 1024
 	if len(*inFolder) > 0 {
 
-		fcr := api.NewFileChunker(outBase, min, max, avg)
+		fcr := api.NewFileChunker(outBase, min, max, avg, &mb)
 		fldrs := []string{*inFolder}
 		err := fcr.ParseFolder(&fldrs)
 		if err != nil {
@@ -79,14 +82,14 @@ func main() {
 		}
 
 	} else if len(*inFile) > 0 {
-		fcr := api.NewFileChunker(outBase, min, max, avg)
+		fcr := api.NewFileChunker(outBase, min, max, avg, &mb)
 		err := fcr.ParseFile(inFile)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 	} else if *dockerFiles {
-		bn := api.NewDockerChunker(outBase, min, max, avg)
+		bn := api.NewDockerChunker(outBase, min, max, avg, &mb)
 		if runtime.GOOS != "windows" {
 			err := bn.ParseDockerLinuxTar(images)
 			if err != nil {
@@ -97,7 +100,7 @@ func main() {
 		}
 
 	} else if *docker {
-		bn := api.NewDockerChunker(outBase, min, max, avg)
+		bn := api.NewDockerChunker(outBase, min, max, avg, &mb)
 		if runtime.GOOS != "windows" {
 			err := bn.ParseDockerLinux(images)
 			if err != nil {
@@ -111,20 +114,20 @@ func main() {
 		}
 
 	} else if *github {
-		gh := api.NewGitHubChunker(outBase, min, max, avg)
+		gh := api.NewGitHubChunker(outBase, min, max, avg, &mb)
 		err := gh.ParseGitHub(languages)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 	} else if *kaggle {
-		kg := api.NewKaggleChunker(outBase, min, max, avg)
+		kg := api.NewKaggleChunker(outBase, min, max, avg, &mb, pqpath)
 		err := kg.ParseKaggle()
 		if err != nil {
 			log.Fatal(err)
 		}
 	} else if *kaggleFiles {
-		bn := api.NewKaggleChunker(outBase, min, max, avg)
+		bn := api.NewKaggleChunker(outBase, min, max, avg, &mb, pqpath)
 		err := bn.ParseKaggleNoTar()
 		if err != nil {
 			log.Fatal(err)

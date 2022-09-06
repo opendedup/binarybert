@@ -22,11 +22,12 @@ type FileChunker struct {
 	wg        sync.WaitGroup
 	TBasePath *string
 	Name      *string
+	bufSize   *int
 }
 
-func NewFileChunker(outBase *string, min, max, avg *int) *FileChunker {
+func NewFileChunker(outBase *string, min, max, avg, bufSize *int) *FileChunker {
 	var pool = worker.NewWorkerPool(runtime.NumCPU(), 1)
-	return &FileChunker{min: min, max: max, avg: avg, outBase: outBase, pool: pool}
+	return &FileChunker{min: min, max: max, avg: avg, outBase: outBase, pool: pool, bufSize: bufSize}
 }
 
 func (n *FileChunker) ParseFile(inFile *string) error {
@@ -52,7 +53,7 @@ func (n *FileChunker) ParseFile(inFile *string) error {
 		}
 		defer f.Close()
 
-		ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), of)
+		ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), *n.bufSize, of)
 		err = ck.Chunk()
 		if err != nil {
 			log.Infof("4")
@@ -138,7 +139,7 @@ func (j *Job) Do() {
 		}
 		defer f.Close()
 
-		ck := NewChunker(f, int(*j.filer.min), int(*j.filer.avg), int(*j.filer.max), of)
+		ck := NewChunker(f, int(*j.filer.min), int(*j.filer.avg), int(*j.filer.max), *j.filer.bufSize, of)
 		err = ck.Chunk()
 		if err != nil {
 			of.Close()

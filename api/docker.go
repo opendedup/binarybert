@@ -21,10 +21,11 @@ type DockerChunker struct {
 	max     *int
 	avg     *int
 	outBase *string
+	bufSize *int
 }
 
-func NewDockerChunker(outBase *string, min, max, avg *int) *DockerChunker {
-	return &DockerChunker{min: min, max: max, avg: avg, outBase: outBase}
+func NewDockerChunker(outBase *string, min, max, avg, bufSize *int) *DockerChunker {
+	return &DockerChunker{min: min, max: max, avg: avg, outBase: outBase, bufSize: bufSize}
 }
 
 func (n *DockerChunker) ParseDockerLinuxTar(images []string) error {
@@ -138,7 +139,7 @@ func (n *DockerChunker) ParseDockerLinuxTar(images []string) error {
 							}
 						}
 						dnm := fmt.Sprintf("%s#%s", strings.Replace(element, "/", "#", -1), nm)
-						fp := NewFileChunker(n.outBase, n.min, n.max, n.avg)
+						fp := NewFileChunker(n.outBase, n.min, n.max, n.avg, n.bufSize)
 						fp.Name = &dnm
 						fp.TBasePath = &dfldr
 						var fldrs []string
@@ -242,7 +243,7 @@ func (n *DockerChunker) ParseDockerLinux(images []string) error {
 						defer f.Close()
 
 						// Chunk and write output files.
-						ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), of)
+						ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), *n.bufSize, of)
 						err = ck.Chunk()
 						if err != nil {
 							log.Infof("Unable to create new chunker")
@@ -333,7 +334,7 @@ func (n *DockerChunker) ParseDockerWindows(images []string) error {
 							}
 
 							// Chunk and write output files.
-							ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), of)
+							ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), *n.bufSize, of)
 							err = ck.Chunk()
 							if err != nil {
 								log.Infof("Unable to create new chunker")

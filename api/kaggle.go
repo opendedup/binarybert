@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -17,18 +18,23 @@ type KaggleChunker struct {
 	avg     *int
 	outBase *string
 	maxSize int64
+	pqPath  *string
+	bufSize *int
+	files   int32
+	pq      int32
+	szp     int64
 }
 
-func NewKaggleChunker(outBase *string, min, max, avg *int) *KaggleChunker {
-	maxSz, err := gounits.FromHumanSize("1GB")
+func NewKaggleChunker(outBase *string, min, max, avg, bufSize *int, pqPath *string) *KaggleChunker {
+	maxSz, err := gounits.FromHumanSize("2GB")
 	if err != nil {
 		log.Error(err)
 	}
-	return &KaggleChunker{min: min, max: max, avg: avg, outBase: outBase, maxSize: maxSz}
+	return &KaggleChunker{min: min, max: max, avg: avg, outBase: outBase, maxSize: maxSz, pqPath: pqPath, bufSize: bufSize}
 }
 
 func (n *KaggleChunker) ParseKaggle() error {
-	for i := 1; i < 6; i++ {
+	for i := 1; i < 16; i++ {
 		repos, err := n.listKaggle(i, []string{})
 		if err != nil {
 			return err
@@ -54,7 +60,7 @@ func (n *KaggleChunker) ParseKaggle() error {
 
 			// Chunk and write output files.
 
-			ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), of)
+			ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), *n.bufSize, of)
 			err = ck.Chunk()
 			if err != nil {
 				log.Infof("Unable to create new chunker")
@@ -62,7 +68,7 @@ func (n *KaggleChunker) ParseKaggle() error {
 			}
 			err = os.Remove(*tarpath)
 			if err != nil {
-				log.Fatal(err)
+				log.Errorf("unable to remove %s %v", *tarpath, err)
 			}
 			of.Close()
 			f.Close()
@@ -73,7 +79,7 @@ func (n *KaggleChunker) ParseKaggle() error {
 }
 
 func (n *KaggleChunker) ParseKaggleNoTar() error {
-	for i := 1; i < 6; i++ {
+	for i := 1; i < 8; i++ {
 		repos, err := n.listKaggle(i, []string{})
 		if err != nil {
 			return err
@@ -81,41 +87,41 @@ func (n *KaggleChunker) ParseKaggleNoTar() error {
 		for _, repo := range *repos {
 			err := n.downloadKaggleNoTar(repo, *n.outBase)
 			if err != nil {
-
+				log.Infof("Error in repo %s, %v", repo, err)
 				return err
 			}
 		}
 	}
 	repos, err := n.listKaggle(1, []string{"--search", "spotify"})
 	if err != nil {
+		log.Info("Error in listing spotify, %v", err)
 		return err
 	}
 	for _, repo := range *repos {
 		err := n.downloadKaggleNoTar(repo, *n.outBase)
 		if err != nil {
-
+			log.Infof("Error in spotify repo %s, %v", repo, err)
 			return err
 		}
 	}
 	repos, err = n.listKaggle(1, []string{"--search", "netflix"})
 	if err != nil {
+		log.Info("Error in listing netflix, %v", err)
 		return err
 	}
 	for _, repo := range *repos {
 		err := n.downloadKaggleNoTar(repo, *n.outBase)
 		if err != nil {
-
+			log.Infof("Error in netflix repo %s, %v", repo, err)
 			return err
 		}
 	}
+	fmt.Printf("Processed %d files and create %d pq files, read %d bytes\n", n.files, n.pq, n.szp)
 	return nil
 }
 
 func (n *KaggleChunker) downloadKaggleNoTar(repo, basfolder string) (err error) {
 	pth := fmt.Sprintf("%s/%s", basfolder, strings.Replace(repo, "/", "_", -1))
-	if strings.Contains(repo, "netflix") {
-		fmt.Printf("############# %s\n", repo)
-	}
 	os.MkdirAll(pth, os.ModePerm)
 	defer os.RemoveAll(pth)
 	cmd := exec.Command("kaggle", "datasets", "download", "--unzip", "--path", pth, repo)
@@ -123,16 +129,25 @@ func (n *KaggleChunker) downloadKaggleNoTar(repo, basfolder string) (err error) 
 	err = cmd.Run()
 
 	if err != nil {
-		log.Infof("Skipping %s", repo)
-		return err
+		log.Infof("Skipping %s because of download error", repo)
+		return nil
 	}
-	fp := NewFileChunker(n.outBase, n.min, n.max, n.avg)
+	fp := NewFileChunker(n.outBase, n.min, n.max, n.avg, n.bufSize)
 	fp.TBasePath = n.outBase
 	if err != nil {
 		log.Infof("196")
 		return err
 	}
 	fldrs := []string{pth}
+	if n.pqPath != nil && len(*n.pqPath) > 0 {
+		for _, inFolder := range fldrs {
+			folder, err := filepath.Abs(inFolder)
+			if err != nil {
+				return err
+			}
+			filepath.Walk(folder, n.visitPath)
+		}
+	}
 	err = fp.ParseFolder(&fldrs)
 	if err != nil {
 		log.Infof("296")
@@ -142,6 +157,50 @@ func (n *KaggleChunker) downloadKaggleNoTar(repo, basfolder string) (err error) 
 
 	return nil
 
+}
+
+func (n *KaggleChunker) visitPath(path string, f os.FileInfo, err error) error {
+	fileInfo, _ := os.Lstat(path)
+	if !fileInfo.IsDir() && fileInfo.Mode().IsRegular() && fileInfo.Size() > 0 {
+		fileExtension := filepath.Ext(path)
+
+		if fileExtension == ".csv" || fileExtension == ".txt" {
+			n.files++
+			n.szp += fileInfo.Size()
+			cmd := exec.Command("python", *n.pqPath, "-csv", path)
+
+			err1 := cmd.Run()
+
+			if err1 != nil {
+				log.Warnf("Skipping %s", path)
+			} else {
+				npath := fmt.Sprintf("%s.parquet", path[:len(path)-4])
+				fileInfo, _ = os.Lstat(npath)
+				n.szp += fileInfo.Size()
+				n.pq++
+			}
+		} else if fileExtension == ".json" {
+			n.szp += fileInfo.Size()
+			n.files++
+			n.szp += fileInfo.Size()
+			cmd := exec.Command("python", *n.pqPath, "-json", path)
+			err1 := cmd.Run()
+
+			if err1 != nil {
+				log.Warnf("Skipping %s", path)
+			} else {
+				npath := fmt.Sprintf("%s.parquet", path[:len(path)-4])
+				fileInfo, err = os.Lstat(npath)
+				if err == nil {
+					n.szp += fileInfo.Size()
+					n.pq++
+				}
+			}
+		} else {
+			os.Remove(path)
+		}
+	}
+	return nil
 }
 
 func downloadKaggle(repo, basfolder string) (tarfile *string, err error) {

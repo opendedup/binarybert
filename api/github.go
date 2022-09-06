@@ -17,10 +17,11 @@ type GitHubChunker struct {
 	max     *int
 	avg     *int
 	outBase *string
+	bufSize *int
 }
 
-func NewGitHubChunker(outBase *string, min, max, avg *int) *GitHubChunker {
-	return &GitHubChunker{min: min, max: max, avg: avg, outBase: outBase}
+func NewGitHubChunker(outBase *string, min, max, avg, bufSize *int) *GitHubChunker {
+	return &GitHubChunker{min: min, max: max, avg: avg, outBase: outBase, bufSize: bufSize}
 }
 
 func (n *GitHubChunker) ParseGitHub(languages []string) error {
@@ -80,7 +81,7 @@ func (n *GitHubChunker) ParseGitHub(languages []string) error {
 				}
 
 				// Chunk and write output files.
-				ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), of)
+				ck := NewChunker(f, int(*n.min), int(*n.avg), int(*n.max), *n.bufSize, of)
 				err = ck.Chunk()
 				if err != nil {
 					log.Infof("Unable to create new chunker")

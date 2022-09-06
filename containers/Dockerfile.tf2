@@ -15,7 +15,8 @@ RUN pip install --upgrade pip && \
     datasets \
     torch \
     grpcio-tools \
-    kaggle
+    kaggle \
+    faiss-gpu
 WORKDIR /home/jupyter
 
 
